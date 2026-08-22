@@ -7,7 +7,10 @@ import {
 } from "crypto";
 import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
 
-const INSTAGRAM_OAUTH_URL = "https://api.instagram.com/oauth/authorize";
+// Business login authorizes on www.instagram.com. api.instagram.com/oauth/authorize
+// is the retired Basic Display host and now answers "Page Not Found", which surfaces
+// as a broken Connect Instagram button. The token exchange still lives on api.
+const INSTAGRAM_OAUTH_URL = "https://www.instagram.com/oauth/authorize";
 const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
