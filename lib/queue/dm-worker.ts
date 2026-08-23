@@ -426,6 +426,34 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       continue;
     }
 
+    // One DM per PERSON per campaign, not one per comment. Someone who leaves
+    // three comments is still one person and must not receive the follow prompt
+    // three times. Their follow-up path is the button in the message they
+    // already have — tapping it re-verifies and delivers the link immediately
+    // (see processPostback), so nothing is lost by not messaging them again.
+    const alreadyMessaged = await prisma.dmLog.findFirst({
+      where: {
+        automationId: automation.id,
+        commenterId,
+        status: "SENT",
+        commentId: { not: commentId },
+      },
+      select: { commentId: true },
+    });
+    if (alreadyMessaged) {
+      await prisma.dmLog.update({
+        where: {
+          automationId_commentId: { automationId: automation.id, commentId },
+        },
+        data: {
+          status: "SKIPPED_DEDUP",
+          matchedKeyword: matchResult.matchedKeyword,
+          errorMessage: `This person was already messaged by this campaign (${alreadyMessaged.commentId})`,
+        },
+      });
+      continue;
+    }
+
     const usage = await reserveWorkspaceDMSend(automation.workspaceId);
     if (!usage.allowed) {
       await prisma.dmLog.update({

@@ -210,9 +210,23 @@ async function sweepCampaign(
       where: {
         automationId: automation.id,
         commentId: { in: needsAction.map((c) => c.id) },
-        ...(automation.publicReplyEnabled
-          ? { publicReplySentAt: { not: null } }
-          : { status: "SENT" }),
+        OR: [
+          automation.publicReplyEnabled
+            ? { publicReplySentAt: { not: null } }
+            : { status: "SENT" },
+          // The worker already ran this comment through BullMQ's full retry
+          // ladder and it still failed. Private-reply failures are almost always
+          // permanent — the comment is past Instagram's reply window, or has
+          // already spent the one private reply it is allowed — so re-adding it
+          // every sweep just burns API quota against a wall and looks like
+          // abuse. A fresh job here would also reset attemptsMade, making the
+          // ladder run again from scratch on each pass.
+          { status: "FAILED" },
+          // Deliberately skipped (already messaged this person, or another
+          // campaign spent the private reply). Re-enqueueing only re-derives
+          // the same skip.
+          { status: "SKIPPED_DEDUP" },
+        ],
       },
       select: { commentId: true },
     });

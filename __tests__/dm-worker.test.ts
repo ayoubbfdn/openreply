@@ -898,6 +898,66 @@ describe("DM Worker — one private reply per comment", () => {
   });
 });
 
+describe("DM Worker — one DM per person per campaign", () => {
+  // The per-person guard and the cross-campaign private-reply guard share
+  // findFirst and both key on status SENT. Only the per-person one passes a
+  // commenterId, so that is what tells them apart here.
+  function mockPersonAlreadyMessaged(previousCommentId: string | null) {
+    mockPrisma.dmLog.findFirst.mockImplementation(
+      async (
+        args: { where?: { status?: string; commenterId?: string } } = {}
+      ) => {
+        if (args.where?.commenterId && args.where?.status === "SENT") {
+          return previousCommentId ? { commentId: previousCommentId } : null;
+        }
+        if (args.where?.status === "SENT") return null;
+        return { commenterName: "commenter_user" };
+      }
+    );
+  }
+
+  it("should not message someone this campaign already messaged", async () => {
+    mockPersonAlreadyMessaged("comment_111");
+
+    const processor = getProcessor();
+    await processor(createMockJob());
+
+    expect(mockSendPrivateReply).not.toHaveBeenCalled();
+    expect(mockSendPrivateReplyWithButton).not.toHaveBeenCalled();
+    expect(mockReserveWorkspaceDMSend).not.toHaveBeenCalled();
+    expect(mockPrisma.dmLog.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "SKIPPED_DEDUP",
+          errorMessage: expect.stringContaining("comment_111"),
+        }),
+      })
+    );
+  });
+
+  it("should not send a second follow prompt to a repeat commenter", async () => {
+    mockPrisma.automation.findMany.mockResolvedValue([
+      { ...mockAutomation, requireFollow: true },
+    ]);
+    mockGetUserFollowStatus.mockResolvedValue(false);
+    mockPersonAlreadyMessaged("comment_111");
+
+    const processor = getProcessor();
+    await processor(createMockJob());
+
+    expect(mockSendPrivateReplyWithButton).not.toHaveBeenCalled();
+  });
+
+  it("should still message a first-time commenter", async () => {
+    mockPersonAlreadyMessaged(null);
+
+    const processor = getProcessor();
+    await processor(createMockJob());
+
+    expect(mockSendPrivateReply).toHaveBeenCalled();
+  });
+});
+
 describe("DM Worker — DM keyword trigger", () => {
   const dmTriggerAutomation = {
     ...mockAutomation,
