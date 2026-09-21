@@ -358,10 +358,31 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         : automation.publicReplyMessage
           ? [automation.publicReplyMessage]
           : [];
+    // One public reply per PERSON per campaign, not one per comment — the same
+    // rule the DM leg below already follows. Someone who leaves three comments
+    // on the post is still one person, and three identical replies under their
+    // three comments reads as spam to everyone else scrolling the thread.
+    // Every active campaign is post-specific, so "per campaign" is "per post".
+    const alreadyRepliedTo = await prisma.dmLog.findFirst({
+      where: {
+        automationId: automation.id,
+        commenterId,
+        publicReplySentAt: { not: null },
+        commentId: { not: commentId },
+      },
+      select: { commentId: true },
+    });
+    if (alreadyRepliedTo) {
+      console.log(
+        `[DM Worker] Skipping public reply: ${commenterId} already got one from this campaign (${alreadyRepliedTo.commentId})`
+      );
+    }
+
     if (
       automation.publicReplyEnabled &&
       replyPool.length > 0 &&
-      !existingLog?.publicReplySentAt
+      !existingLog?.publicReplySentAt &&
+      !alreadyRepliedTo
     ) {
       try {
         const chosen = replyPool[Math.floor(Math.random() * replyPool.length)];

@@ -15,6 +15,7 @@ const {
   mockQueueAdd,
   mockReserveWorkspaceDMSend,
   mockReleaseWorkspaceDMReservation,
+  mockSendCommentReply,
 } = vi.hoisted(() => ({
   mockPrisma: {
     automation: {
@@ -48,6 +49,7 @@ const {
   mockQueueAdd: vi.fn(),
   mockReserveWorkspaceDMSend: vi.fn(),
   mockReleaseWorkspaceDMReservation: vi.fn(),
+  mockSendCommentReply: vi.fn(),
 }));
 
 vi.mock("@/lib/db/client", () => ({
@@ -62,7 +64,7 @@ vi.mock("@/lib/meta/client", () => ({
   sendDirectMessageWithButton: mockSendDirectMessageWithButton,
   sendDirectMessage: mockSendDirectMessage,
   sendDirectMessageWithLinkButton: mockSendDirectMessageWithLinkButton,
-  sendCommentReply: vi.fn(),
+  sendCommentReply: mockSendCommentReply,
   MetaApiError: class MetaApiError extends Error {
     code: number;
     constructor(
@@ -955,6 +957,58 @@ describe("DM Worker — one DM per person per campaign", () => {
     await processor(createMockJob());
 
     expect(mockSendPrivateReply).toHaveBeenCalled();
+  });
+});
+
+describe("DM Worker — one public reply per person per campaign", () => {
+  // The per-person public-reply guard is the only findFirst that filters on
+  // publicReplySentAt, so that is what tells it apart from the DM guards.
+  function mockPersonAlreadyReplied(previousCommentId: string | null) {
+    mockPrisma.dmLog.findFirst.mockImplementation(
+      async (
+        args: {
+          where?: {
+            status?: string;
+            commenterId?: string;
+            publicReplySentAt?: unknown;
+          };
+        } = {}
+      ) => {
+        if (args.where?.publicReplySentAt) {
+          return previousCommentId ? { commentId: previousCommentId } : null;
+        }
+        if (args.where?.status === "SENT") return null;
+        return { commenterName: "commenter_user" };
+      }
+    );
+  }
+
+  beforeEach(() => {
+    mockPrisma.automation.findMany.mockResolvedValue([
+      {
+        ...mockAutomation,
+        publicReplyEnabled: true,
+        publicReplyMessage: "check your DMs!",
+      },
+    ]);
+  });
+
+  it("should not reply again to someone this campaign already replied to", async () => {
+    mockPersonAlreadyReplied("comment_111");
+
+    const processor = getProcessor();
+    await processor(createMockJob());
+
+    expect(mockSendCommentReply).not.toHaveBeenCalled();
+  });
+
+  it("should reply to a first-time commenter", async () => {
+    mockPersonAlreadyReplied(null);
+
+    const processor = getProcessor();
+    await processor(createMockJob());
+
+    expect(mockSendCommentReply).toHaveBeenCalled();
   });
 });
 
